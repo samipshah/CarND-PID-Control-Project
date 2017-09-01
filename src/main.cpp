@@ -28,14 +28,25 @@ std::string hasData(std::string s) {
   return "";
 }
 
+// PID twiddle(const PID& init, const Model&)
+// run twiddle modifying pid's kp,ki,kd by dp,di,dd and 
+// using pid to calculate next steering angle given a cte
+// using model to calculate next cte given steering angle and prev_cte
+// this way twiddle can be run offline .. 
+// I think the problem is this would work if road was a straight line.
+
 int main()
 {
   uWS::Hub h;
 
-  PID pid;
-  // TODO: Initialize the pid variable.
+  PID pid_steer;
+  PID pid_throttle;
 
-  h.onMessage([&pid](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
+  // TODO: Initialize the pid variable.
+  pid_steer.Init(0.15,.0005,3.5); // base parameter values to begin with
+  pid_throttle.Init(-1.0,0.0,-1.0); // lets have just PD controller because I acts on cummulative error
+
+  h.onMessage([&pid_steer,&pid_throttle](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
@@ -46,30 +57,44 @@ int main()
         auto j = json::parse(s);
         std::string event = j[0].get<std::string>();
         if (event == "telemetry") {
+          const double max_steering_angle = 1.0;
           // j[1] is the data JSON object
           double cte = std::stod(j[1]["cte"].get<std::string>());
           double speed = std::stod(j[1]["speed"].get<std::string>());
           double angle = std::stod(j[1]["steering_angle"].get<std::string>());
           double steer_value;
+          double throttle;
           /*
           * TODO: Calcuate steering value here, remember the steering value is
           * [-1, 1].
           * NOTE: Feel free to play around with the throttle and speed. Maybe use
           * another PID controller to control the speed!
           */
-          
+          pid_steer.UpdateError(cte);
+          steer_value = pid_steer.TotalError(); 
+          if(steer_value > max_steering_angle) {
+            steer_value = max_steering_angle;
+          } else if(steer_value < -max_steering_angle) {
+            steer_value = -max_steering_angle;
+          }
+
+          pid_throttle.UpdateError(fabs(cte));
+          throttle = 1.0 - pid_throttle.TotalError(); // decrease speed as cte increase
+          if(throttle < 0.0) {
+            throttle = 0.0;
+          }
           // DEBUG
           std::cout << "CTE: " << cte << " Steering Value: " << steer_value << std::endl;
 
           json msgJson;
           msgJson["steering_angle"] = steer_value;
-          msgJson["throttle"] = 0.3;
+          msgJson["throttle"] = throttle;
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
           std::cout << msg << std::endl;
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {
-        // Manual driving
+        // Manual driving 
         std::string msg = "42[\"manual\",{}]";
         ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
       }
@@ -93,6 +118,8 @@ int main()
 
   h.onConnection([&h](uWS::WebSocket<uWS::SERVER> ws, uWS::HttpRequest req) {
     std::cout << "Connected!!!" << std::endl;
+    // if twiddle data exists run that algorithm tweak it to find the best
+    // print it and use it
   });
 
   h.onDisconnection([&h](uWS::WebSocket<uWS::SERVER> ws, int code, char *message, size_t length) {
